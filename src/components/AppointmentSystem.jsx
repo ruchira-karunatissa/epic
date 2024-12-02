@@ -1,8 +1,8 @@
 /* eslint-disable no-unused-vars */
 import React, { useState } from 'react';
 import { Search, Calendar, Clock, ArrowLeft, HelpCircle, AlertCircle, Check } from 'lucide-react';
-import { Card, CardContent } from './ui/card';  // Fixed path
-import { Alert, AlertDescription } from './ui/alert';  // Fixed path
+import { Card, CardContent } from 'components/ui/card';
+import { Alert, AlertDescription } from 'components/ui/alert';
 
 
 // Sample data
