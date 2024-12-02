@@ -4,11 +4,13 @@ import { Card, CardContent } from './ui/card';  // Fixed path
 import { Alert, AlertDescription } from './ui/alert';  // Fixed path
 
 // Validation utilities
+/*
 const validators = {
   phone: (value) => /^\+94[0-9]{9}$/.test(value) ? '' : 'Invalid phone number',
   nic: (value) => /^[0-9]{9}[vVxX]$|^[0-9]{12}$/.test(value) ? '' : 'Invalid NIC',
   email: (value) => !value || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? '' : 'Invalid email'
 };
+*/
 
 // Sample data
 const specializations = [
