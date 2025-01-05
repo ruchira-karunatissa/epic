@@ -1,0 +1,251 @@
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Constants
+const PORT = 3006;
+const EPIC_BASE_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/STU3';
+const TOKEN_URL = 'http://localhost:3001/api/token';
+
+// Appointment status constants
+const APPOINTMENT_STATUSES = {
+    PROPOSED: 'proposed',
+    PENDING: 'pending',
+    BOOKED: 'booked',
+    ARRIVED: 'arrived',
+    FULFILLED: 'fulfilled',
+    CHECKED_IN: 'checked-in',
+    COMPLETED: 'completed'
+};
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post(TOKEN_URL);
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+function calculateWorkloadMetrics(appointments) {
+    // Consider an appointment scheduled if it's not proposed and not pending
+    const scheduledAppointments = appointments.filter(appt => {
+        const status = appt.status?.toLowerCase();
+        return status && 
+               status !== APPOINTMENT_STATUSES.PROPOSED && 
+               status !== APPOINTMENT_STATUSES.PENDING;
+    });
+
+    // Get today's date in ISO format
+    const today = new Date().toISOString().split('T')[0];
+    
+    // Count today's scheduled appointments
+    const todayAppointments = scheduledAppointments.filter(appt => 
+        appt.start.startsWith(today));
+
+    // Count video vs in-person visits
+    const videoVisits = scheduledAppointments.filter(appt => 
+        appt.serviceType?.[0]?.coding?.[0]?.display?.toLowerCase().includes('video'));
+
+    const metrics = {
+        workload: scheduledAppointments.length,
+        todayWorkload: todayAppointments.length,
+        fatigueLevel: Math.min(Math.floor(todayAppointments.length / 3), 10), // 1 fatigue unit per 3 appointments
+        criticalCases: scheduledAppointments.length - videoVisits.length, // Non-video visits are considered critical
+        scheduledAppointmentsDetails: scheduledAppointments.map(appt => ({
+            status: appt.status,
+            dateTime: appt.start,
+            type: appt.serviceType?.[0]?.coding?.[0]?.display
+        }))
+    };
+
+    console.log('Metrics Calculation:', {
+        totalAppointments: appointments.length,
+        scheduledCount: scheduledAppointments.length,
+        todayCount: todayAppointments.length,
+        videoVisitsCount: videoVisits.length,
+        appointmentStatuses: appointments.map(a => a.status)
+    });
+
+    return metrics;
+}
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Main API endpoint to find appointments
+app.post('/api/appointments/v2', async (req, res) => {
+    try {
+        const { specialization, startDate, endDate } = req.body;
+        const accessToken = await getAccessToken();
+
+        console.log('Searching appointments with filters:', { specialization, startDate, endDate });
+
+        // Get all available appointments
+        const epicResponse = await axios({
+            method: 'POST',
+            url: `${EPIC_BASE_URL}/Appointment/$find`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: {
+                resourceType: "Parameters",
+                parameter: []
+            }
+        });
+
+        if (!epicResponse.data.entry) {
+            throw new Error('No appointment data received from Epic');
+        }
+
+        console.log(`Retrieved ${epicResponse.data.entry.length} appointments from Epic`);
+
+        // Group appointments by practitioner
+        const practitionerAppointments = new Map();
+
+        // First pass: collect all appointments for each practitioner
+        epicResponse.data.entry.forEach(entry => {
+            const appointment = entry.resource;
+            const practitionerParticipant = appointment.participant?.find(p => 
+                p.actor.reference.includes('/Practitioner/'));
+
+            if (practitionerParticipant) {
+                const practitionerId = practitionerParticipant.actor.reference.split('/').pop();
+                if (!practitionerAppointments.has(practitionerId)) {
+                    practitionerAppointments.set(practitionerId, {
+                        id: practitionerId,
+                        name: practitionerParticipant.actor.display,
+                        specialization: appointment.serviceType?.[0]?.coding?.[0]?.display || '',
+                        allAppointments: [],
+                        availableAppointments: []
+                    });
+                }
+                
+                practitionerAppointments.get(practitionerId).allAppointments.push(appointment);
+                
+                if (appointment.status?.toLowerCase() === APPOINTMENT_STATUSES.PROPOSED) {
+                    practitionerAppointments.get(practitionerId).availableAppointments.push(appointment);
+                }
+                
+                console.log(`Processed appointment ${appointment.id} for practitioner ${practitionerId} (Status: ${appointment.status})`);
+            }
+        });
+
+        console.log(`Found ${practitionerAppointments.size} practitioners with appointments`);
+
+        // Score practitioners and format response
+        const scoredAppointments = [];
+
+        for (const [practitionerId, practitionerData] of practitionerAppointments) {
+            // Skip practitioners with no available appointments
+            if (practitionerData.availableAppointments.length === 0) {
+                console.log(`Skipping practitioner ${practitionerId} - no available appointments`);
+                continue;
+            }
+
+            // Calculate metrics based on all scheduled (non-proposed) appointments
+            const metrics = calculateWorkloadMetrics(practitionerData.allAppointments);
+
+            // Calculate score
+            const scoreBreakdown = {
+                specializationMatch: specialization && 
+                    practitionerData.specialization.toLowerCase().includes(specialization.toLowerCase()) ? 50 : 0,
+                fatigueDeduction: metrics.fatigueLevel * -2,
+                criticalCasesDeduction: metrics.criticalCases > 3 ? -20 : 0,
+                workloadDeduction: metrics.workload * -1.5
+            };
+
+            const totalScore = Object.values(scoreBreakdown).reduce((a, b) => a + b, 0);
+
+            console.log(`Practitioner ${practitionerId} score:`, { totalScore, scoreBreakdown, metrics });
+
+            // Add each available appointment with practitioner score
+            practitionerData.availableAppointments.forEach(appointment => {
+                const locationParticipant = appointment.participant?.find(p => 
+                    p.actor.reference.includes('/Location/'));
+
+                scoredAppointments.push({
+                    appointmentId: appointment.id,
+                    status: appointment.status,
+                    practitioner: {
+                        id: practitionerData.id,
+                        name: practitionerData.name,
+                        score: totalScore,
+                        scoreBreakdown,
+                        metrics: {
+                            ...metrics,
+                            availableSlots: practitionerData.availableAppointments.length,
+                            scheduledAppointments: practitionerData.allAppointments.length - practitionerData.availableAppointments.length
+                        }
+                    },
+                    location: locationParticipant?.actor?.display || 'Unknown',
+                    specialization: appointment.serviceType?.[0]?.coding?.[0]?.display || 'Unknown',
+                    dateTime: appointment.start,
+                    duration: appointment.minutesDuration
+                });
+            });
+        }
+
+        // Apply date filters and sort
+        const filteredAppointments = scoredAppointments
+            .filter(appt => {
+                if (startDate && new Date(appt.dateTime) < new Date(startDate)) return false;
+                if (endDate && new Date(appt.dateTime) > new Date(endDate)) return false;
+                return true;
+            })
+            .sort((a, b) => b.practitioner.score - a.practitioner.score);
+
+        console.log(`Returning ${filteredAppointments.length} appointments after filtering and sorting`);
+
+        res.json({
+            success: true,
+            totalCount: filteredAppointments.length,
+            appointments: filteredAppointments
+        });
+
+    } catch (error) {
+        console.error('Error in appointment search:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch appointments',
+            details: error.message
+        });
+    }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({
+        success: false,
+        error: 'Internal Server Error',
+        details: err.message
+    });
+});
+
+// Start the server
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Health check available at http://localhost:${PORT}/health`);
+    console.log(`Appointments endpoint at http://localhost:${PORT}/api/appointments/v2`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
+});

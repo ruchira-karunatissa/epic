@@ -1,0 +1,139 @@
+const express = require('express');
+const axios = require('axios');
+const app = express();
+
+// Middleware for parsing JSON bodies
+app.use(express.json());
+
+// Default port
+const PORT = process.env.PORT || 3003;
+
+// Epic FHIR API endpoint
+const EPIC_API_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/STU3/Appointment/$find';
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post('http://localhost:3001/api/token');
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Function to filter appointments by date range
+function filterAppointmentsByDateRange(appointments, startDate, endDate) {
+    if (!startDate && !endDate) return appointments;
+
+    const startTimestamp = startDate ? new Date(startDate).getTime() : 0;
+    const endTimestamp = endDate ? new Date(endDate).getTime() : Number.MAX_SAFE_INTEGER;
+
+    return appointments.filter(appointment => {
+        const appointmentDate = new Date(appointment.dateTime).getTime();
+        return appointmentDate >= startTimestamp && appointmentDate <= endTimestamp;
+    });
+}
+
+// Main API endpoint to find appointments
+app.post('/api/appointments', async (req, res) => {
+    try {
+        // Get optional filter parameters from request body
+        const { practitioner, location, specialization, startDate, endDate } = req.body;
+
+        // Get access token
+        const accessToken = await getAccessToken();
+
+        // Prepare parameters for Epic API
+        const params = {
+            resourceType: "Parameters",
+            parameter: []
+        };
+
+        // Add optional filters if provided
+        if (practitioner) {
+            params.parameter.push({
+                name: "practitioner",
+                valueReference: {
+                    reference: `Practitioner/${practitioner}`
+                }
+            });
+        }
+
+        if (location) {
+            params.parameter.push({
+                name: "location",
+                valueReference: {
+                    reference: `Location/${location}`
+                }
+            });
+        }
+
+        if (specialization) {
+            params.parameter.push({
+                name: "specialty",
+                valueString: specialization
+            });
+        }
+
+        // Make request to Epic API
+        const epicResponse = await axios({
+            method: 'POST',
+            url: EPIC_API_URL,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: params
+        });
+
+        // Transform the response to desired format with correct parsing
+        let formattedAppointments = epicResponse.data.entry.map(entry => {
+            const appointment = entry.resource;
+            
+            // Find practitioner and location from participants
+            const practitionerParticipant = appointment.participant.find(p => 
+                p.actor.reference.includes('/Practitioner/'));
+            const locationParticipant = appointment.participant.find(p => 
+                p.actor.reference.includes('/Location/'));
+            
+            // Get service type if available
+            const serviceType = appointment.serviceType?.[0]?.coding?.[0]?.display || 'Unknown';
+
+            return {
+                practitioner: practitionerParticipant?.actor?.display || 'Unknown',
+                location: locationParticipant?.actor?.display || 'Unknown',
+                specialization: serviceType,
+                dateTime: appointment.start
+            };
+        });
+
+        // Apply date filtering
+        if (startDate || endDate) {
+            formattedAppointments = filterAppointmentsByDateRange(formattedAppointments, startDate, endDate);
+        }
+
+        res.json({
+            success: true,
+            appointments: formattedAppointments
+        });
+
+    } catch (error) {
+        console.error('Error fetching appointments:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch appointments',
+            details: error.message
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy' });
+});
+
+// Start the server
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});

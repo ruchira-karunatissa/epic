@@ -1,0 +1,226 @@
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Constants
+const PORT = 3009;
+const EPIC_BASE_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
+const TOKEN_URL = 'http://localhost:3001/api/token';
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post(TOKEN_URL);
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Function to extract text from HTML content using regex
+function extractTextFromHTML(htmlContent) {
+    try {
+        // Extract text between span tags
+        const spanMatch = htmlContent.match(/<span[^>]*>(.*?)<\/span>/s);
+        if (spanMatch && spanMatch[1]) {
+            return spanMatch[1].trim();
+        }
+        
+        // If no span match, try to extract any text
+        const textMatch = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        return textMatch || htmlContent;
+    } catch (error) {
+        console.error('Error parsing content:', error);
+        return htmlContent;
+    }
+}
+
+// Function to fetch binary content
+async function fetchBinaryContent(binaryId, accessToken) {
+    try {
+        if (!binaryId) return null;
+
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/Binary/${binaryId}`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': '*/*'
+            }
+        });
+
+        console.log('Binary Response:', {
+            binaryId,
+            contentType: typeof response.data,
+            hasData: !!response.data
+        });
+
+        if (response.data) {
+            if (typeof response.data === 'string') {
+                return extractTextFromHTML(response.data);
+            } else if (response.data.data) {
+                const decodedContent = Buffer.from(response.data.data, 'base64').toString();
+                return extractTextFromHTML(decodedContent);
+            }
+        }
+        return null;
+    } catch (error) {
+        console.error(`Error fetching binary ${binaryId}:`, error.message);
+        return null;
+    }
+}
+
+// Function to process document
+async function processDocument(doc, accessToken) {
+    try {
+        const binaryUrl = doc.content?.[0]?.attachment?.url;
+        let binaryId = null;
+        
+        if (binaryUrl) {
+            binaryId = binaryUrl.split('/').pop();
+        } else if (doc.content?.[0]?.attachment?.data) {
+            // If content is directly in the document
+            return {
+                id: doc.id,
+                type: doc.type?.text || doc.type?.coding?.[0]?.display || 'Unknown',
+                status: doc.status,
+                docStatus: doc.docStatus,
+                category: doc.category?.[0]?.coding?.[0]?.display || 'Unknown',
+                subject: doc.subject?.reference,
+                content: Buffer.from(doc.content[0].attachment.data, 'base64').toString(),
+                encounter: doc.context?.encounter?.[0]?.reference,
+                date: doc.date,
+                author: doc.author?.[0]?.display,
+                created: doc.date
+            };
+        }
+
+        console.log(`Processing document ${doc.id} with binary ${binaryId}`);
+        const content = binaryId ? await fetchBinaryContent(binaryId, accessToken) : null;
+
+        return {
+            id: doc.id,
+            type: doc.type?.text || doc.type?.coding?.[0]?.display || 'Unknown',
+            status: doc.status,
+            docStatus: doc.docStatus,
+            category: doc.category?.[0]?.coding?.[0]?.display || 'Unknown',
+            subject: doc.subject?.reference,
+            content: content,
+            encounter: doc.context?.encounter?.[0]?.reference,
+            date: doc.date,
+            author: doc.author?.[0]?.display,
+            created: doc.date,
+            binaryId: binaryId
+        };
+    } catch (error) {
+        console.error(`Error processing document ${doc.id}:`, error);
+        return null;
+    }
+}
+
+// Get all clinical notes for a patient
+app.get('/api/patients/:patientId/clinical-notes', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        const accessToken = await getAccessToken();
+
+        console.log(`Fetching clinical notes for patient: ${patientId}`);
+
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/DocumentReference`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            },
+            params: {
+                patient: patientId,
+                category: 'clinical-note'
+            }
+        });
+
+        if (!response.data.entry) {
+            return res.json({
+                success: true,
+                notes: []
+            });
+        }
+
+        // Process each document
+        const documents = await Promise.all(
+            response.data.entry
+                .filter(entry => entry.resource.id)
+                .map(entry => processDocument(entry.resource, accessToken))
+        );
+
+        // Filter and sort
+        const validDocuments = documents
+            .filter(doc => doc !== null)
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        res.json({
+            success: true,
+            totalCount: validDocuments.length,
+            notes: validDocuments
+        });
+
+    } catch (error) {
+        console.error('Error fetching clinical notes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch clinical notes',
+            details: error.message
+        });
+    }
+});
+
+// Get a single clinical note
+app.get('/api/clinical-notes/:documentId', async (req, res) => {
+    try {
+        const { documentId } = req.params;
+        const accessToken = await getAccessToken();
+
+        const docResponse = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/DocumentReference/${documentId}`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            }
+        });
+
+        const document = await processDocument(docResponse.data, accessToken);
+
+        if (!document) {
+            return res.status(404).json({
+                success: false,
+                error: 'Document not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            note: document
+        });
+
+    } catch (error) {
+        console.error('Error fetching clinical note:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch clinical note',
+            details: error.message
+        });
+    }
+});
+
+// Start the server
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});

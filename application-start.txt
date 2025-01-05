@@ -1,0 +1,18 @@
+FE start - 
+
+cd doctor-appointment
+npm start
+
+(react app start on port 3002 since 3000 is used for grafana)
+
+BE start -
+
+cd doctor-app-backend/workspace
+node epic-oauth-api 3001
+node epic-appointment-find 3003
+node epic-appointment-book 3004
+
+node epic-booked-appointments 3007
+node epic-clinic-note-create 3008
+node epic-clinic-note-search 3009
+

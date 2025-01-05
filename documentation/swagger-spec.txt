@@ -1,0 +1,431 @@
+openapi: 3.0.0
+info:
+  title: Epic Healthcare Appointment System API
+  description: API documentation for the Epic Healthcare Appointment System
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@example.com
+
+servers:
+  - url: http://localhost:3001
+    description: Authentication Service
+  - url: http://localhost:3003
+    description: Appointment Search Service
+  - url: http://localhost:3004
+    description: Appointment Booking Service
+  - url: http://localhost:3007
+    description: Patient Appointments Service
+  - url: http://localhost:3008
+    description: Clinical Notes Creation Service
+  - url: http://localhost:3009
+    description: Clinical Notes Search Service
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+        error:
+          type: string
+        details:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+
+    HealthCheck:
+      type: object
+      properties:
+        status:
+          type: string
+          example: healthy
+        timestamp:
+          type: string
+          format: date-time
+
+    Token:
+      type: object
+      properties:
+        access_token:
+          type: string
+        token_type:
+          type: string
+        expires_in:
+          type: integer
+
+    AppointmentSearchRequest:
+      type: object
+      properties:
+        practitioner:
+          type: string
+        specialization:
+          type: string
+        location:
+          type: string
+        startDate:
+          type: string
+          format: date
+        endDate:
+          type: string
+          format: date
+
+    Appointment:
+      type: object
+      properties:
+        appointmentId:
+          type: string
+        status:
+          type: string
+        patientId:
+          type: string
+        practitioner:
+          type: string
+        location:
+          type: string
+        specialization:
+          type: string
+        dateTime:
+          type: string
+          format: date-time
+        duration:
+          type: string
+        isBookable:
+          type: boolean
+
+    AppointmentBookingRequest:
+      type: object
+      required:
+        - resourceType
+        - parameter
+      properties:
+        resourceType:
+          type: string
+          enum: [Parameters]
+        parameter:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              valueIdentifier:
+                type: object
+                properties:
+                  value:
+                    type: string
+              valueString:
+                type: string
+
+    ClinicalNoteRequest:
+      type: object
+      required:
+        - patientId
+        - encounterId
+        - noteText
+      properties:
+        patientId:
+          type: string
+        encounterId:
+          type: string
+        noteText:
+          type: string
+        noteType:
+          type: string
+          default: "Consultation Note"
+        noteStatus:
+          type: string
+          default: "final"
+
+    ClinicalNote:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        type:
+          type: string
+        docStatus:
+          type: string
+        category:
+          type: string
+        subject:
+          type: string
+        content:
+          type: string
+        encounter:
+          type: string
+        date:
+          type: string
+          format: date-time
+        author:
+          type: string
+        created:
+          type: string
+          format: date-time
+        binaryId:
+          type: string
+
+paths:
+  /api/token:
+    post:
+      tags:
+        - Authentication
+      summary: Get Epic access token
+      description: Generate OAuth 2.0 access token for Epic FHIR API access
+      responses:
+        '200':
+          description: Successful token generation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Token'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/appointments:
+    post:
+      tags:
+        - Appointments
+      summary: Search available appointments
+      description: Search and filter available appointments
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppointmentSearchRequest'
+      responses:
+        '200':
+          description: Successful search
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  totalCount:
+                    type: integer
+                  appointments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Appointment'
+        '500':
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /api/book-appointment:
+    post:
+      tags:
+        - Appointments
+      summary: Book an appointment
+      description: Book a specific appointment slot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AppointmentBookingRequest'
+      responses:
+        '200':
+          description: Appointment booked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  appointmentId:
+                    type: string
+                  message:
+                    type: string
+                  details:
+                    type: object
+                  timestamp:
+                    type: string
+                    format: date-time
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/ServerError'
+
+  /api/patient/{patientId}/appointments:
+    get:
+      tags:
+        - Appointments
+      summary: Get patient's booked appointments
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of patient's appointments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  patientId:
+                    type: string
+                  totalAppointments:
+                    type: integer
+                  appointments:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Appointment'
+
+  /api/clinical-notes:
+    post:
+      tags:
+        - Clinical Notes
+      summary: Create clinical note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClinicalNoteRequest'
+      responses:
+        '200':
+          description: Clinical note created successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  documentReference:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      status:
+                        type: string
+                      created:
+                        type: string
+                      type:
+                        type: string
+                      patientId:
+                        type: string
+                      encounterId:
+                        type: string
+
+  /api/clinical-notes/{documentId}:
+    get:
+      tags:
+        - Clinical Notes
+      summary: Get clinical note by ID
+      parameters:
+        - name: documentId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Clinical note details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  document:
+                    $ref: '#/components/schemas/ClinicalNote'
+
+  /api/patients/{patientId}/clinical-notes:
+    get:
+      tags:
+        - Clinical Notes
+      summary: Get patient's clinical notes
+      parameters:
+        - name: patientId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of patient's clinical notes
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  totalCount:
+                    type: integer
+                  notes:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/ClinicalNote'
+
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check endpoint
+      description: Check if the service is healthy
+      responses:
+        '200':
+          description: Service health status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthCheck'
+
+components:
+  responses:
+    BadRequest:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+security:
+  - BearerAuth: []
+
+tags:
+  - name: Authentication
+    description: Authentication operations
+  - name: Appointments
+    description: Appointment management operations
+  - name: Clinical Notes
+    description: Clinical notes operations
+  - name: System
+    description: System operations

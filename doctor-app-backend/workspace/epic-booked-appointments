@@ -1,0 +1,161 @@
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Constants
+const PORT = 3007;
+const EPIC_BASE_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
+const TOKEN_URL = 'http://localhost:3001/api/token';
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post(TOKEN_URL);
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Function to extract participant details
+function extractParticipantDetails(participants) {
+    let details = {
+        patient: null,
+        practitioner: null,
+        location: null
+    };
+
+    if (!participants) return details;
+
+    participants.forEach(participant => {
+        if (!participant.actor?.reference) return;
+
+        if (participant.actor.reference.includes('Patient/')) {
+            details.patient = {
+                id: participant.actor.reference.split('/')[1],
+                name: participant.actor.display
+            };
+        } else if (participant.actor.reference.includes('Practitioner/')) {
+            details.practitioner = {
+                id: participant.actor.reference.split('/')[1],
+                name: participant.actor.display
+            };
+        } else if (participant.actor.reference.includes('Location/')) {
+            details.location = {
+                id: participant.actor.reference.split('/')[1],
+                name: participant.actor.display
+            };
+        }
+    });
+
+    return details;
+}
+
+// Get patient appointments endpoint
+app.get('/api/patient/:patientId/appointments', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        const accessToken = await getAccessToken();
+
+        console.log('Fetching appointments for patient:', patientId);
+
+        // Call Epic API to get patient appointments
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/Appointment`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            },
+            params: {
+                patient: patientId,
+                'service-category': 'appointment'
+            }
+        });
+
+        if (!response.data.entry) {
+            return res.json({
+                success: true,
+                appointments: []
+            });
+        }
+
+        // Process and format appointments
+        const appointments = response.data.entry.map(entry => {
+            const appointment = entry.resource;
+            const participants = extractParticipantDetails(appointment.participant);
+            
+            return {
+                appointmentId: appointment.id,
+                status: appointment.status,
+                type: appointment.serviceType?.[0]?.coding?.[0]?.display || 'Unknown',
+                patient: {
+                    name: participants.patient?.name || 'Unknown',
+                    id: participants.patient?.id || 'Unknown'
+                },
+                practitioner: {
+                    name: participants.practitioner?.name || 'Unknown',
+                    id: participants.practitioner?.id || 'Unknown'
+                },
+                location: {
+                    name: participants.location?.name || 'Unknown',
+                    id: participants.location?.id || 'Unknown'
+                },
+                dateTime: {
+                    start: appointment.start,
+                    end: appointment.end
+                },
+                duration: appointment.minutesDuration,
+                created: appointment.created,
+                comment: appointment.comment,
+                instructions: appointment.patientInstruction
+            };
+        });
+
+        // Sort appointments by date
+        appointments.sort((a, b) => new Date(a.dateTime.start) - new Date(b.dateTime.start));
+
+        res.json({
+            success: true,
+            patientId,
+            totalAppointments: appointments.length,
+            appointments: appointments
+        });
+
+    } catch (error) {
+        console.error('Error fetching patient appointments:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch patient appointments',
+            details: error.message
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Start the server
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Health check available at http://localhost:${PORT}/health`);
+    console.log(`Patient appointments endpoint at http://localhost:${PORT}/api/patient/:patientId/appointments`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
+});

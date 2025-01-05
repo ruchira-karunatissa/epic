@@ -1,0 +1,997 @@
+
+get EPIC access token API:
+
+const express = require('express');
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+const { v4: uuidv4 } = require('uuid');
+
+const app = express();
+const port = process.env.PORT || 3001;
+
+// Configuration - Using exact same config as the working script
+const config = {
+    oauth2TokenUrl: 'https://fhir.epic.com/interconnect-fhir-oauth/oauth2/token',
+    sandboxClientID: '66f46d5f-7960-4d51-a24a-cfe41b7b17fb',
+    privateKey: `-----BEGIN PRIVATE KEY-----
+MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDFm6WWT/UPv+0/
+RJh03aWF9OoGkBxOIPUPoKQ0SRGspCqEfQp6693mbBTXh1CZRqoRXoSydYdDkbWo
+u9FvWfkote/YCgWrxb9P8hoq+MWuYw4VxrvzZIJuvrcdQ/I+JH5hEjODlZZwR9v9
+bbFGjkOTeP1Tx2N4VBNh/6EcGWeP42svEmL6PSVz9TOjRfV0MfD4WoO83av2GGtG
+o7mDwIIYyOCc5TEibS1QZl3dRfvJmPBWIQzmfzgKy4Oxg2qiVuE4vMM07DmUkfjh
+eadms0Xe6ZOFwwirrcn/BuDg06sQ7czOwivR6aQnk4VzdBF8u9Hld5HxSoOEOarO
+TH5ZJrsnAgMBAAECggEAFa3K35qGWkPQ4taDL/BbEZRPZ7NABQrqPQcqIeRRmzzo
+FIs6mZwDxvIyN9JMCNdu8/iIb/hN2R9aAcNtKXKs+jGPjlt3HiOpJpD7HEjDjdX8
+fG4bk4sCIOUtEKRc0JgkrJXtxIX7haDp5RE3gsk7vP49MzJA2uQaZkTAUjqv7mHa
+g54nBtNWkKdx+HW4h+FcAGl1Dp8clU4WKez0+MBRBON2raxt4fhsCGwDtLMjGamd
+p7fpBRSESLQgNK3do9EN3fzWrynpPoWykH1TZU+Jalhhe2p0vloqEguI09SCYLXt
+e/p15VAj0vqeU9X1eTeYa+TuGmHNijGHtIHlaqYJ5QKBgQD+SWQ9t/TjuIv/qO5a
+Ue5LvepMwkQfEM84ADr2U3IJxxqwsokLcvwaHAgzkc/Kzs0trXprgI4Txp7pLrLg
+bXEyvwmkOPazBJHV+bDJhMJXZjV/QUAdo828/MasLrGeevExZo6lEKbMaI/IJIpO
+FFVpQL0h6UyWauPpMGNXLt25FQKBgQDG8H4YpLObNzrYgoicoC0ihwQd1qA/tIYN
+QOXcfDOz3M4NUEcetcxhT789bmQCgmMagRivbWBX8Lkqr5qsuFE9fyDRBOwkDi8J
+uzpULBMrnGTHfaq5xV9qZsAeT34r/ohLLbb4RLj10SVdPUo4ageOSoOqARNqxRbP
+DoQ7IGf6SwKBgQC9dXcfWPk31d9RO89jMhonCrgQOsnAj6ik498Ker/Dszoantrm
+0eQtm+csbR5xz8UlnFRS1nSFHX525FlYR5KIqbeISPzeArCZybDDZIvbzIZdawNX
+Uh1PCtMHpL6oApfEI9Jx/8cXE2zVRQxbAmFky1xfcNCkXb2zl17crUl7xQKBgQDF
+hZbNhQpHPGkS+1gEmwz1UTUHI0hsuCK5GgygBDmZhcyYb3KNzVel7vYkWmy2CRu4
+/yCxXVnhNsPC3CQpBcCz3HuKzOZhTivp75mUZUaLcHank+BlHtED5g0uiyLtL4XH
+jxYyHpm+h/AfSXFd3fiukNF1hCfxRMrGvtUPl7dlTQKBgD6AnBTAkn2jksCNHgqO
+MGPaqzDCJ9nBbcRM+T2/x/UtKmds5xm7M6DUWOiNFFnkr7XhJmDUxd4TSogZrYUs
+nem0DkCy4h1iOq2rel/iUQ+zq6WTVI/lxNfChRqIobgNE+ub1GlZ3YREyL83WwF/
+0rh5rSUe6CGMsx6z82+2U42b
+-----END PRIVATE KEY-----`
+};
+
+// Middleware to parse JSON bodies
+app.use(express.json());
+
+// Function to get OAuth token (copied directly from working script)
+async function getOAuthToken() {
+    try {
+        // Construct JWT claims
+        const now = Math.floor(Date.now() / 1000);
+        const claims = {
+            iss: config.sandboxClientID,
+            sub: config.sandboxClientID,
+            aud: config.oauth2TokenUrl,
+            jti: uuidv4(),
+            exp: now + 60
+        };
+        console.log('Claims:', JSON.stringify(claims, null, 2));
+
+        // Generate signed token using RS384 algorithm
+        const signedToken = jwt.sign(claims, config.privateKey, { algorithm: 'RS384' });
+        console.log('Signed token:', signedToken);
+
+        // Prepare API call payload
+        const payload = new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
+            client_assertion: signedToken
+        });
+
+        // Make the API call
+        const response = await axios.post(config.oauth2TokenUrl, payload, {
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded'
+            }
+        });
+
+        console.log('Response status:', response.status);
+        console.log('Response headers:', response.headers);
+        console.log('Response body:', response.data);
+
+        return response.data;
+
+    } catch (error) {
+        console.error('Error:', error.message);
+        if (error.response) {
+            console.error('Response status:', error.response.status);
+            console.error('Response data:', error.response.data);
+        }
+        throw error;
+    }
+}
+
+// OAuth token endpoint using the working function
+app.post('/api/token', async (req, res) => {
+    try {
+        const token = await getOAuthToken();
+        res.json(token);
+    } catch (error) {
+        console.error('Error in /api/token:', error);
+        res.status(401).json({
+            error: true,
+            message: error.message,
+            details: error.response?.data || null
+        });
+    }
+});
+
+// Start server
+const server = app.listen(port, () => {
+    console.log(`Epic OAuth API server running on port ${port}`);
+});
+
+module.exports = app;
+
+
+appointment find api:
+
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');  // Add this line
+const app = express();
+
+// CORS configuration
+app.use(cors({
+    origin: true, // Allow all origins
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
+}));
+// Middleware for parsing JSON bodies
+app.use(express.json());
+
+// Default port
+const PORT = process.env.PORT || 3003;
+
+// Epic FHIR API endpoint
+const EPIC_API_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/STU3/Appointment/$find';
+
+// Define bookable appointment statuses
+const BOOKABLE_STATUSES = ['proposed', 'pending'];
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post('http://localhost:3001/api/token');
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Function to filter appointments by date range
+function filterAppointmentsByDateRange(appointments, startDate, endDate) {
+    if (!startDate && !endDate) return appointments;
+
+    const startTimestamp = startDate ? new Date(startDate).getTime() : 0;
+    const endTimestamp = endDate ? new Date(endDate).getTime() : Number.MAX_SAFE_INTEGER;
+
+    return appointments.filter(appointment => {
+        const appointmentDate = new Date(appointment.dateTime).getTime();
+        return appointmentDate >= startTimestamp && appointmentDate <= endTimestamp;
+    });
+}
+
+// Function to filter appointments by other criteria
+function filterAppointments(appointments, filters) {
+    return appointments.filter(appointment => {
+        // Check practitioner match if filter provided
+        if (filters.practitioner && 
+            !appointment.practitioner.toLowerCase().includes(filters.practitioner.toLowerCase())) {
+            return false;
+        }
+
+        // Check location match if filter provided
+        if (filters.location && 
+            !appointment.location.toLowerCase().includes(filters.location.toLowerCase())) {
+            return false;
+        }
+
+        // Check specialization match if filter provided
+        if (filters.specialization && 
+            !appointment.specialization.toLowerCase().includes(filters.specialization.toLowerCase())) {
+            return false;
+        }
+
+        return true;
+    });
+}
+
+// Main API endpoint to find appointments
+app.post('/api/appointments', async (req, res) => {
+    try {
+        // Get optional filter parameters from request body
+        const { practitioner, location, specialization, startDate, endDate } = req.body;
+
+        // Get access token
+        const accessToken = await getAccessToken();
+
+        // Make request to Epic API
+        const epicResponse = await axios({
+            method: 'POST',
+            url: EPIC_API_URL,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: {
+                resourceType: "Parameters",
+                parameter: []
+            }
+        });
+
+        // Transform the response to desired format with correct parsing
+        let formattedAppointments = epicResponse.data.entry.map(entry => {
+            const appointment = entry.resource;
+            
+            // Find practitioner and location from participants
+            const practitionerParticipant = appointment.participant.find(p => 
+                p.actor.reference.includes('/Practitioner/'));
+            const locationParticipant = appointment.participant.find(p => 
+                p.actor.reference.includes('/Location/'));
+            
+            // Find patient participant if available
+            const patientParticipant = appointment.participant?.find(p => 
+                p.actor.reference.includes('/Patient/'));
+            
+            // Extract patient ID from reference if available
+            const patientId = patientParticipant?.actor.reference.split('/').pop() || 'Unknown';
+            
+            // Get service type if available
+            const serviceType = appointment.serviceType?.[0]?.coding?.[0]?.display || 'Unknown';
+
+            return {
+                appointmentId: appointment.id || 'Unknown',
+                status: appointment.status || 'Unknown',
+                patientId: patientId,
+                practitioner: practitionerParticipant?.actor?.display || 'Unknown',
+                location: locationParticipant?.actor?.display || 'Unknown',
+                specialization: serviceType,
+                dateTime: appointment.start,
+                duration: appointment.minutesDuration || 'Unknown',
+                isBookable: BOOKABLE_STATUSES.includes(appointment.status?.toLowerCase())
+            };
+        });
+
+        // Filter for only bookable appointments
+        formattedAppointments = formattedAppointments.filter(appointment => appointment.isBookable);
+
+        // Apply date filtering
+        if (startDate || endDate) {
+            formattedAppointments = filterAppointmentsByDateRange(formattedAppointments, startDate, endDate);
+        }
+
+        // Apply other filters
+        if (practitioner || location || specialization) {
+            formattedAppointments = filterAppointments(formattedAppointments, {
+                practitioner,
+                location,
+                specialization
+            });
+        }
+
+        res.json({
+            success: true,
+            totalCount: formattedAppointments.length,
+            appointments: formattedAppointments
+        });
+
+    } catch (error) {
+        console.error('Error fetching appointments:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch appointments',
+            details: error.message
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy' });
+});
+
+// Start the server
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
+
+
+
+get booked appointments API:
+
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Constants
+const PORT = 3007;
+const EPIC_BASE_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
+const TOKEN_URL = 'http://localhost:3001/api/token';
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post(TOKEN_URL);
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Function to extract participant details
+function extractParticipantDetails(participants) {
+    let details = {
+        patient: null,
+        practitioner: null,
+        location: null
+    };
+
+    if (!participants) return details;
+
+    participants.forEach(participant => {
+        if (!participant.actor?.reference) return;
+
+        if (participant.actor.reference.includes('Patient/')) {
+            details.patient = {
+                id: participant.actor.reference.split('/')[1],
+                name: participant.actor.display
+            };
+        } else if (participant.actor.reference.includes('Practitioner/')) {
+            details.practitioner = {
+                id: participant.actor.reference.split('/')[1],
+                name: participant.actor.display
+            };
+        } else if (participant.actor.reference.includes('Location/')) {
+            details.location = {
+                id: participant.actor.reference.split('/')[1],
+                name: participant.actor.display
+            };
+        }
+    });
+
+    return details;
+}
+
+// Get patient appointments endpoint
+app.get('/api/patient/:patientId/appointments', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        const accessToken = await getAccessToken();
+
+        console.log('Fetching appointments for patient:', patientId);
+
+        // Call Epic API to get patient appointments
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/Appointment`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            },
+            params: {
+                patient: patientId,
+                'service-category': 'appointment'
+            }
+        });
+
+        if (!response.data.entry) {
+            return res.json({
+                success: true,
+                appointments: []
+            });
+        }
+
+        // Process and format appointments
+        const appointments = response.data.entry.map(entry => {
+            const appointment = entry.resource;
+            const participants = extractParticipantDetails(appointment.participant);
+            
+            return {
+                appointmentId: appointment.id,
+                status: appointment.status,
+                type: appointment.serviceType?.[0]?.coding?.[0]?.display || 'Unknown',
+                patient: {
+                    name: participants.patient?.name || 'Unknown',
+                    id: participants.patient?.id || 'Unknown'
+                },
+                practitioner: {
+                    name: participants.practitioner?.name || 'Unknown',
+                    id: participants.practitioner?.id || 'Unknown'
+                },
+                location: {
+                    name: participants.location?.name || 'Unknown',
+                    id: participants.location?.id || 'Unknown'
+                },
+                dateTime: {
+                    start: appointment.start,
+                    end: appointment.end
+                },
+                duration: appointment.minutesDuration,
+                created: appointment.created,
+                comment: appointment.comment,
+                instructions: appointment.patientInstruction
+            };
+        });
+
+        // Sort appointments by date
+        appointments.sort((a, b) => new Date(a.dateTime.start) - new Date(b.dateTime.start));
+
+        res.json({
+            success: true,
+            patientId,
+            totalAppointments: appointments.length,
+            appointments: appointments
+        });
+
+    } catch (error) {
+        console.error('Error fetching patient appointments:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch patient appointments',
+            details: error.message
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Start the server
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Health check available at http://localhost:${PORT}/health`);
+    console.log(`Patient appointments endpoint at http://localhost:${PORT}/api/patient/:patientId/appointments`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
+});
+
+
+
+
+clinic note create api:
+
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Constants
+const PORT = 3008;
+const EPIC_BASE_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
+const TOKEN_URL = 'http://localhost:3001/api/token';
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post(TOKEN_URL);
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Create clinic note endpoint
+app.post('/api/clinical-notes', async (req, res) => {
+    try {
+        const {
+            patientId,
+            encounterId,
+            noteText,
+            noteType = "Consultation Note",  // default note type
+            noteStatus = "final"             // default status
+        } = req.body;
+
+        // Validate required fields
+        if (!patientId || !encounterId || !noteText) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields',
+                details: 'patientId, encounterId, and noteText are required'
+            });
+        }
+
+        // Convert note text to base64
+        const noteBase64 = Buffer.from(noteText).toString('base64');
+
+        // Get access token
+        const accessToken = await getAccessToken();
+
+        // Prepare document reference payload
+        const documentReference = {
+            resourceType: "DocumentReference",
+            docStatus: noteStatus,
+            type: {
+                coding: [
+                    {
+                        system: "http://loinc.org",
+                        code: "11488-4",
+                        display: noteType
+                    }
+                ],
+                text: noteType
+            },
+            subject: {
+                reference: `Patient/${patientId}`
+            },
+            content: [
+                {
+                    attachment: {
+                        contentType: "text/plain",
+                        data: noteBase64
+                    }
+                }
+            ],
+            context: {
+                encounter: [{
+                    reference: `Encounter/${encounterId}`
+                }]
+            }
+        };
+
+        // Call Epic API to create document reference
+        const response = await axios({
+            method: 'POST',
+            url: `${EPIC_BASE_URL}/DocumentReference`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Content-Type': 'application/json'
+            },
+            data: documentReference
+        });
+
+        // Return success response with created document details
+        res.json({
+            success: true,
+            message: 'Clinical note created successfully',
+            documentReference: {
+                id: response.data.id,
+                status: response.data.docStatus,
+                created: response.data.created,
+                type: noteType,
+                patientId,
+                encounterId
+            }
+        });
+
+    } catch (error) {
+        console.error('Error creating clinical note:', error);
+        res.status(error.response?.status || 500).json({
+            success: false,
+            error: 'Failed to create clinical note',
+            details: error.response?.data || error.message
+        });
+    }
+});
+
+// Get clinical note by ID
+app.get('/api/clinical-notes/:documentId', async (req, res) => {
+    try {
+        const { documentId } = req.params;
+        const accessToken = await getAccessToken();
+
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/DocumentReference/${documentId}`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            }
+        });
+
+        // Decode the base64 note text
+        const noteData = response.data.content[0]?.attachment?.data;
+        const decodedNote = noteData ? Buffer.from(noteData, 'base64').toString() : null;
+
+        res.json({
+            success: true,
+            document: {
+                id: response.data.id,
+                status: response.data.docStatus,
+                type: response.data.type?.text,
+                patientId: response.data.subject?.reference.split('/')[1],
+                encounterId: response.data.context?.encounter[0]?.reference.split('/')[1],
+                note: decodedNote
+            }
+        });
+
+    } catch (error) {
+        console.error('Error fetching clinical note:', error);
+        res.status(error.response?.status || 500).json({
+            success: false,
+            error: 'Failed to fetch clinical note',
+            details: error.response?.data || error.message
+        });
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy', timestamp: new Date().toISOString() });
+});
+
+// Start the server
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    console.log(`Health check available at http://localhost:${PORT}/health`);
+});
+
+// Graceful shutdown
+process.on('SIGTERM', () => {
+    console.log('SIGTERM signal received: closing HTTP server');
+    server.close(() => {
+        console.log('HTTP server closed');
+        process.exit(0);
+    });
+});
+
+clinic note search API:
+
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+
+const app = express();
+
+// Middleware
+app.use(express.json());
+app.use(cors());
+
+// Constants
+const PORT = 3009;
+const EPIC_BASE_URL = 'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/R4';
+const TOKEN_URL = 'http://localhost:3001/api/token';
+
+// Function to get access token
+async function getAccessToken() {
+    try {
+        const response = await axios.post(TOKEN_URL);
+        return response.data.access_token;
+    } catch (error) {
+        console.error('Token Error Details:', error.response?.data || error.message);
+        throw new Error('Failed to obtain access token: ' + (error.response?.data || error.message));
+    }
+}
+
+// Function to extract text from HTML content using regex
+function extractTextFromHTML(htmlContent) {
+    try {
+        // Extract text between span tags
+        const spanMatch = htmlContent.match(/<span[^>]*>(.*?)<\/span>/s);
+        if (spanMatch && spanMatch[1]) {
+            return spanMatch[1].trim();
+        }
+        
+        // If no span match, try to extract any text
+        const textMatch = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+        return textMatch || htmlContent;
+    } catch (error) {
+        console.error('Error parsing content:', error);
+        return htmlContent;
+    }
+}
+
+// Function to fetch binary content
+async function fetchBinaryContent(binaryId, accessToken) {
+    try {
+        if (!binaryId) return null;
+
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/Binary/${binaryId}`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': '*/*'
+            }
+        });
+
+        console.log('Binary Response:', {
+            binaryId,
+            contentType: typeof response.data,
+            hasData: !!response.data
+        });
+
+        if (response.data) {
+            if (typeof response.data === 'string') {
+                return extractTextFromHTML(response.data);
+            } else if (response.data.data) {
+                const decodedContent = Buffer.from(response.data.data, 'base64').toString();
+                return extractTextFromHTML(decodedContent);
+            }
+        }
+        return null;
+    } catch (error) {
+        console.error(`Error fetching binary ${binaryId}:`, error.message);
+        return null;
+    }
+}
+
+// Function to process document
+async function processDocument(doc, accessToken) {
+    try {
+        const binaryUrl = doc.content?.[0]?.attachment?.url;
+        let binaryId = null;
+        
+        if (binaryUrl) {
+            binaryId = binaryUrl.split('/').pop();
+        } else if (doc.content?.[0]?.attachment?.data) {
+            // If content is directly in the document
+            return {
+                id: doc.id,
+                type: doc.type?.text || doc.type?.coding?.[0]?.display || 'Unknown',
+                status: doc.status,
+                docStatus: doc.docStatus,
+                category: doc.category?.[0]?.coding?.[0]?.display || 'Unknown',
+                subject: doc.subject?.reference,
+                content: Buffer.from(doc.content[0].attachment.data, 'base64').toString(),
+                encounter: doc.context?.encounter?.[0]?.reference,
+                date: doc.date,
+                author: doc.author?.[0]?.display,
+                created: doc.date
+            };
+        }
+
+        console.log(`Processing document ${doc.id} with binary ${binaryId}`);
+        const content = binaryId ? await fetchBinaryContent(binaryId, accessToken) : null;
+
+        return {
+            id: doc.id,
+            type: doc.type?.text || doc.type?.coding?.[0]?.display || 'Unknown',
+            status: doc.status,
+            docStatus: doc.docStatus,
+            category: doc.category?.[0]?.coding?.[0]?.display || 'Unknown',
+            subject: doc.subject?.reference,
+            content: content,
+            encounter: doc.context?.encounter?.[0]?.reference,
+            date: doc.date,
+            author: doc.author?.[0]?.display,
+            created: doc.date,
+            binaryId: binaryId
+        };
+    } catch (error) {
+        console.error(`Error processing document ${doc.id}:`, error);
+        return null;
+    }
+}
+
+// Get all clinical notes for a patient
+app.get('/api/patients/:patientId/clinical-notes', async (req, res) => {
+    try {
+        const { patientId } = req.params;
+        const accessToken = await getAccessToken();
+
+        console.log(`Fetching clinical notes for patient: ${patientId}`);
+
+        const response = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/DocumentReference`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            },
+            params: {
+                patient: patientId,
+                category: 'clinical-note'
+            }
+        });
+
+        if (!response.data.entry) {
+            return res.json({
+                success: true,
+                notes: []
+            });
+        }
+
+        // Process each document
+        const documents = await Promise.all(
+            response.data.entry
+                .filter(entry => entry.resource.id)
+                .map(entry => processDocument(entry.resource, accessToken))
+        );
+
+        // Filter and sort
+        const validDocuments = documents
+            .filter(doc => doc !== null)
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        res.json({
+            success: true,
+            totalCount: validDocuments.length,
+            notes: validDocuments
+        });
+
+    } catch (error) {
+        console.error('Error fetching clinical notes:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch clinical notes',
+            details: error.message
+        });
+    }
+});
+
+// Get a single clinical note
+app.get('/api/clinical-notes/:documentId', async (req, res) => {
+    try {
+        const { documentId } = req.params;
+        const accessToken = await getAccessToken();
+
+        const docResponse = await axios({
+            method: 'GET',
+            url: `${EPIC_BASE_URL}/DocumentReference/${documentId}`,
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json'
+            }
+        });
+
+        const document = await processDocument(docResponse.data, accessToken);
+
+        if (!document) {
+            return res.status(404).json({
+                success: false,
+                error: 'Document not found'
+            });
+        }
+
+        res.json({
+            success: true,
+            note: document
+        });
+
+    } catch (error) {
+        console.error('Error fetching clinical note:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to fetch clinical note',
+            details: error.message
+        });
+    }
+});
+
+// Start the server
+const server = app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
+
+
+book an appointment:
+
+
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const bodyParser = require('body-parser');
+const app = express();
+const PORT = process.env.PORT || 3004;
+
+// CORS configuration
+app.use(cors({
+    origin: true,
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
+}));
+
+// Body parsing middleware for different content types
+app.use(bodyParser.json({
+    type: ['application/json', 'application/fhir+json']
+}));
+
+// Debug middleware
+app.use((req, res, next) => {
+    if (req.method === 'POST') {
+        console.log('=== Request Debug Info ===');
+        console.log('Headers:', req.headers);
+        console.log('Body:', req.body);
+        console.log('========================');
+    }
+    next();
+});
+
+// Appointment booking endpoint
+app.post('/api/book-appointment', async (req, res) => {
+    try {
+        console.log('Incoming request to book appointment');
+        
+        // Check for empty body
+        if (!req.body || Object.keys(req.body).length === 0) {
+            console.log('Request body is empty. Headers:', req.headers);
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid request',
+                message: 'Request body is required',
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        // Get access token
+        const tokenResponse = await axios.post('http://localhost:3001/api/token');
+        const accessToken = tokenResponse.data.access_token;
+
+        if (!accessToken) {
+            throw new Error('Failed to obtain access token');
+        }
+
+        console.log('Sending request to Epic with body:', JSON.stringify(req.body, null, 2));
+
+        // Make request to Epic's appointment booking API
+        const epicResponse = await axios.post(
+            'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/STU3/Appointment/$book',
+            req.body,
+            {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/fhir+json',
+                    'Accept': 'application/fhir+json'
+                }
+            }
+        );
+
+        let appointmentId = epicResponse.data?.parameter?.find(p => p.name === 'appointment')?.valueIdentifier?.value;
+
+        res.status(200).json({
+            success: true,
+            appointmentId: appointmentId,
+            message: 'Appointment successfully booked',
+            details: epicResponse.data,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Error details:', {
+            message: error.message,
+            stack: error.stack,
+            response: error.response?.data
+        });
+
+        if (error.response) {
+            res.status(error.response.status || 500).json({
+                success: false,
+                error: 'Failed to book appointment',
+                details: error.response.data,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Internal server error',
+                message: error.message,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy' });
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+

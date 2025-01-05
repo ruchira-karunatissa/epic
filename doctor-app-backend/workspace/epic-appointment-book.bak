@@ -1,0 +1,112 @@
+const express = require('express');
+const cors = require('cors');
+const axios = require('axios');
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+// CORS configuration
+app.use(cors({
+    origin: true, // Allow all origins
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
+    preflightContinue: false,
+    optionsSuccessStatus: 204
+}));
+// Middleware for parsing JSON bodies
+app.use(express.json());
+
+// Appointment booking endpoint
+app.post('/api/book-appointment', async (req, res) => {
+    try {
+        // Get access token from local authentication service
+        const tokenResponse = await axios.get('http://localhost:3001/api/token');
+        const accessToken = tokenResponse.data.access_token;
+
+        if (!accessToken) {
+            throw new Error('Failed to obtain access token');
+        }
+
+        // Make request to Epic's appointment booking API
+        const epicResponse = await axios.post(
+            'https://fhir.epic.com/interconnect-fhir-oauth/api/FHIR/STU3/Appointment/$book',
+            req.body,
+            {
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                }
+            }
+        );
+
+        // Extract appointment ID from Epic's response
+        // Epic FHIR responses typically include a resource ID in the format "Appointment/1234"
+        let appointmentId = null;
+        if (epicResponse.data && epicResponse.data.id) {
+            appointmentId = epicResponse.data.id;
+        } else if (epicResponse.data && epicResponse.data.resource && epicResponse.data.resource.id) {
+            appointmentId = epicResponse.data.resource.id;
+        }
+
+        // Return formatted response with appointment ID
+        res.status(epicResponse.status).json({
+            success: true,
+            appointmentId: appointmentId,
+            message: 'Appointment successfully booked',
+            details: epicResponse.data,
+            timestamp: new Date().toISOString()
+        });
+
+    } catch (error) {
+        console.error('Error booking appointment:', error);
+        
+        // Handle different types of errors
+        if (error.response) {
+            // Error response from Epic or token service
+            res.status(error.response.status).json({
+                success: false,
+                error: 'Failed to book appointment',
+                details: error.response.data,
+                timestamp: new Date().toISOString()
+            });
+        } else if (error.request) {
+            // No response received
+            res.status(503).json({
+                success: false,
+                error: 'Service unavailable',
+                message: 'No response received from the server',
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            // Something else went wrong
+            res.status(500).json({
+                success: false,
+                error: 'Internal server error',
+                message: error.message,
+                timestamp: new Date().toISOString()
+            });
+        }
+    }
+});
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'healthy' });
+});
+
+// Start server
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({
+        success: false,
+        error: 'Internal server error',
+        message: err.message,
+        timestamp: new Date().toISOString()
+    });
+});
