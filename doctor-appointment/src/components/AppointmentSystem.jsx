@@ -984,9 +984,9 @@ const AppointmentSystem = () => {
                           </div>
                         </div>
                         <div>
-                          <div className="text-sm font-medium">{appointment.practitioner}</div>
-                          <div className="text-sm text-gray-600">{appointment.location}</div>
-                          <div className="text-red-600 text-xs mt-1">MYCHART VIDEO VISIT</div>
+                        <div className="text-sm font-medium">{/*appointment.practitioner*/}</div>
+                        <div className="text-sm text-gray-600">{appointment.location}</div>
+                        <div className="text-red-600 text-xs mt-1 hidden">MYCHART VIDEO VISIT</div>
                         </div>
                       </div>
                     </button>
